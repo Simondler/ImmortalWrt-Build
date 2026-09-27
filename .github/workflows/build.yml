@@ -1,0 +1,222 @@
+name: Build ImmortalWrt
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ImmortalWrt branch, tag, or commit (25.12.2 series: openwrt-25.12)"
+        required: true
+        default: "openwrt-25.12"
+        type: string
+      release:
+        description: "Create a GitHub Release"
+        required: true
+        default: false
+        type: boolean
+      clean:
+        description: "Run make clean before compiling"
+        required: true
+        default: false
+        type: boolean
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout configuration repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar file flex gawk genisoimage gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man \
+            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev \
+            libgmp-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev \
+            libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev \
+            lld llvm lrzsz msmtp nano ninja-build p7zip-full patch pkgconf \
+            python3 python3-docutils python3-pip python3-ply python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Clone requested ImmortalWrt source
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          mkdir immortalwrt
+          git -C immortalwrt init
+          git -C immortalwrt remote add origin "$REPO_URL"
+
+          # Accepts a branch, tag, or reachable commit SHA.
+          git -C immortalwrt -c protocol.version=2 fetch --depth=1 --filter=blob:none origin "$SOURCE_REF"
+          git -C immortalwrt checkout --detach FETCH_HEAD
+
+          SOURCE_COMMIT="$(git -C immortalwrt rev-parse HEAD)"
+          SOURCE_VERSION="$(git -C immortalwrt describe --tags --always)"
+          REF_SLUG="$(printf '%s' "$SOURCE_REF" | tr -cs 'A-Za-z0-9._-' '-' | sed -e 's/^-*//' -e 's/-*$//')"
+          REF_SLUG="${REF_SLUG:-source}"
+
+          {
+            echo "commit=$SOURCE_COMMIT"
+            echo "display_version=$SOURCE_VERSION"
+            echo "ref_slug=$REF_SLUG"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Requested source: $SOURCE_REF"
+          echo "Resolved version: $SOURCE_VERSION"
+          echo "Resolved commit: $SOURCE_COMMIT"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: immortalwrt-ccache-${{ runner.os }}-${{ steps.source.outputs.ref_slug }}-${{ hashFiles('.config') }}
+          restore-keys: |
+            immortalwrt-ccache-${{ runner.os }}-${{ steps.source.outputs.ref_slug }}-
+
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.ccache
+          ccache --set-config=cache_dir="$HOME/.ccache"
+          ccache --set-config=max_size=5G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          ccache -z
+
+      - name: Update feeds
+        working-directory: immortalwrt
+        run: ./scripts/feeds update -a
+
+      - name: Install feeds
+        working-directory: immortalwrt
+        run: ./scripts/feeds install -a
+
+      - name: Copy configuration
+        run: |
+          set -euo pipefail
+          if [ ! -f .config ]; then
+            echo "ERROR: .config was not found in the configuration repository."
+            exit 1
+          fi
+
+          cp .config immortalwrt/.config
+
+          if ! grep -qx 'CONFIG_CCACHE=y' immortalwrt/.config; then
+            echo "WARNING: CONFIG_CCACHE=y is absent from .config; ccache will not accelerate this build."
+          fi
+
+          grep -E 'CONFIG_TARGET_|CONFIG_DEFAULT_TARGET_|CONFIG_PACKAGE_luci|CONFIG_PACKAGE_kmod' \
+            immortalwrt/.config | head -100 || true
+
+      - name: Generate final configuration
+        working-directory: immortalwrt
+        run: |
+          make defconfig
+          grep '^CONFIG_TARGET_' .config | head -50 || true
+
+      - name: Clean build directory
+        if: ${{ inputs.clean }}
+        working-directory: immortalwrt
+        run: make clean
+
+      - name: Download sources
+        working-directory: immortalwrt
+        run: make download -j"$(nproc)" V=s
+
+      - name: Build firmware
+        working-directory: immortalwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" world 2>&1 | tee build.log
+
+      - name: Retry failed build with verbose output
+        if: failure()
+        working-directory: immortalwrt
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j1 V=s 2>&1 | tee build-retry.log
+
+      - name: Show build information
+        if: always()
+        working-directory: immortalwrt
+        run: |
+          df -h
+          ccache -s || true
+          test ! -f build.log || tail -100 build.log
+          find bin/targets -type f \
+            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
+            -o -name '*.manifest' -o -name 'sha256sums' \) -print 2>/dev/null || true
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            immortalwrt/build.log
+            immortalwrt/build-retry.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt-${{ steps.source.outputs.ref_slug }}-${{ github.run_number }}
+          path: immortalwrt/bin/targets/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Prepare release files
+        if: ${{ success() && inputs.release }}
+        working-directory: immortalwrt
+        env:
+          SOURCE_REF: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          SOURCE_VERSION: ${{ steps.source.outputs.display_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../release
+          find bin/targets -type f \
+            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
+            -o -name '*.manifest' -o -name 'sha256sums' \) \
+            -exec cp --parents '{}' ../release/ \;
+
+          {
+            echo "Requested source: $SOURCE_REF"
+            echo "Resolved version: $SOURCE_VERSION"
+            echo "ImmortalWrt commit: $SOURCE_COMMIT"
+            echo "Configuration repository commit: $GITHUB_SHA"
+            echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } > ../release/build-info.txt
+
+      - name: Create GitHub Release
+        if: ${{ success() && inputs.release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: immortalwrt-${{ steps.source.outputs.ref_slug }}-run-${{ github.run_number }}
+          name: ImmortalWrt ${{ steps.source.outputs.ref_slug }} Build ${{ github.run_number }}
+          body: |
+            ## ImmortalWrt Build
+
+            - Requested source: `${{ inputs.version }}`
+            - Resolved source commit: `${{ steps.source.outputs.commit }}`
+            - Configuration repository commit: `${{ github.sha }}`
+            - Build run: `${{ github.run_number }}`
+          files: release/**
