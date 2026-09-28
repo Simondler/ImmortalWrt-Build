@@ -47,6 +47,23 @@ jobs:
             python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
             upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
+      - name: Check ImmortalWrt version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version }}"
+      
+          echo "Checking ImmortalWrt version: ${VERSION}"
+      
+          if ! git ls-remote --exit-code --tags \
+            "${REPO_URL}" \
+            "refs/tags/${VERSION}" >/dev/null 2>&1; then
+      
+            echo "ERROR: ImmortalWrt tag '${VERSION}' does not exist!"
+            exit 1
+          fi
+      
+          echo "OK: ImmortalWrt tag '${VERSION}' exists."
+
       - name: Clone requested ImmortalWrt source
         id: source
         env:
