@@ -141,39 +141,25 @@ jobs:
           echo "Resolved commit: $SOURCE_COMMIT"
 
       - name: Set default LAN IP
-        if: steps.check_release.outputs.should_build == 'true'
         working-directory: immortalwrt
         shell: bash
         run: |
           set -euo pipefail
-      
+
           CONFIG_FILE="package/base-files/files/bin/config_generate"
-      
+          OLD_IP="192.168.1.1"
+          NEW_IP="192.168.31.91"
+
           echo "Before modification:"
-          grep -n 'lan) ipad=' "$CONFIG_FILE" || true
-      
-          if grep -q 'lan) ipad=${ipaddr:-"192.168.1.1"} ' "$CONFIG_FILE"; then
-      
-            sed -i \
-              's/lan) ipad=${ipaddr:-"192.168.1.1"} /lan) ipad=${ipaddr:-"192.168.31.91"} /g' \
-              "$CONFIG_FILE"
-      
-          else
-      
-            echo "ERROR: Expected LAN IP configuration was not found."
-            exit 1
-      
-          fi
-      
+          grep -Fn 'lan) ipad=${ipaddr:-"192.168.1.1"} ;;' "$CONFIG_FILE"
+
+          sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+
           echo "After modification:"
-          grep -n 'lan) ipad=' "$CONFIG_FILE"
-      
-          if ! grep -q 'lan) ipad=${ipaddr:-"192.168.31.91"} ' "$CONFIG_FILE"; then
-            echo "ERROR: LAN IP modification failed."
-            exit 1
-          fi
-      
-          echo "Default LAN IP successfully changed to 192.168.31.91"
+          grep -Fn "lan) ipad=\${ipaddr:-\"${NEW_IP}\"} ;;" "$CONFIG_FILE"
+
+          grep -Fq "lan) ipad=\${ipaddr:-\"${NEW_IP}\"} ;;" "$CONFIG_FILE"
+          echo "Default LAN IP changed to ${NEW_IP}"
 
       - name: Restore ccache
         uses: actions/cache@v4
