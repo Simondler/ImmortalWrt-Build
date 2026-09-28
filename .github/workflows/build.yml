@@ -253,33 +253,92 @@ jobs:
           SOURCE_REF: ${{ inputs.version }}
           SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
           SOURCE_VERSION: ${{ steps.source.outputs.display_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
+
           mkdir -p ../release
-          find bin/targets -type f \
-            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
-            -o -name '*.manifest' -o -name 'sha256sums' \) \
-            -exec cp --parents '{}' ../release/ \;
 
-          {
-            echo "Requested source: $SOURCE_REF"
-            echo "Resolved version: $SOURCE_VERSION"
-            echo "ImmortalWrt commit: $SOURCE_COMMIT"
-            echo "Configuration repository commit: $GITHUB_SHA"
-            echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          } > ../release/build-info.txt
+          echo "Searching for release images..."
 
+          ISO_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-image-efi.iso' -print -quit)"
+          VMDK_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-ext4-combined-efi.vmdk.gz' -print -quit)"
+          IMG_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-ext4-combined-efi.img.gz' -print -quit)"
+
+          if [ -z "$ISO_FILE" ]; then
+            echo "ERROR: immortalwrt-x86-64-generic-image-efi.iso was not generated."
+            exit 1
+          fi
+
+          if [ -z "$VMDK_FILE" ]; then
+            echo "ERROR: immortalwrt-x86-64-generic-ext4-combined-efi.vmdk.gz was not generated."
+            exit 1
+          fi
+
+          if [ -z "$IMG_FILE" ]; then
+            echo "ERROR: immortalwrt-x86-64-generic-ext4-combined-efi.img.gz was not generated."
+            exit 1
+          fi
+
+          # Add the requested release version to the asset filenames.
+          cp "$ISO_FILE" \
+            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-image-efi.iso"
+
+          cp "$VMDK_FILE" \
+            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.vmdk.gz"
+
+          cp "$IMG_FILE" \
+            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.img.gz"
+
+          # Generate checksums for the three release assets.
+          (
+            cd ../release
+            sha256sum \
+              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-image-efi.iso" \
+              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.vmdk.gz" \
+              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.img.gz" \
+              > SHA256SUMS
+          )
+
+          cat > ../release/build-info.txt <<EOF
+          ImmortalWrt custom build
+          Release version: ${RELEASE_VERSION}
+          Requested source: ${SOURCE_REF}
+          Resolved source: ${SOURCE_VERSION}
+          ImmortalWrt commit: ${SOURCE_COMMIT}
+          Configuration repository commit: ${GITHUB_SHA}
+          Build run: ${GITHUB_RUN_NUMBER}
+          Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          EOF
+
+          echo "Release files:"
+          ls -lh ../release
       - name: Create GitHub Release
         if: ${{ success() && inputs.release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: immortalwrt-${{ steps.source.outputs.ref_slug }}-run-${{ github.run_number }}
-          name: ImmortalWrt ${{ steps.source.outputs.ref_slug }} Build ${{ github.run_number }}
+          tag_name: immortalwrt-${{ inputs.release_version }}-${{ steps.source.outputs.ref_slug }}-${{ github.run_number }}
+          name: ImmortalWrt ${{ inputs.release_version }} x86-64 Build
           body: |
-            ## ImmortalWrt Build
+            ## ImmortalWrt ${{ inputs.release_version }} x86-64
 
             - Requested source: `${{ inputs.version }}`
-            - Resolved source commit: `${{ steps.source.outputs.commit }}`
+            - Resolved source: `${{ steps.source.outputs.display_version }}`
+            - ImmortalWrt commit: `${{ steps.source.outputs.commit }}`
             - Configuration repository commit: `${{ github.sha }}`
             - Build run: `${{ github.run_number }}`
-          files: release/**
+
+            ### Release assets
+
+            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-image-efi.iso`
+            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.vmdk.gz`
+            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.img.gz`
+            - `SHA256SUMS`
+            - `build-info.txt`
+          files: |
+            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-image-efi.iso
+            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.vmdk.gz
+            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.img.gz
+            release/SHA256SUMS
+            release/build-info.txt
+          fail_on_unmatched_files: true
