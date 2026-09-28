@@ -34,6 +34,38 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Detect GitHub build runner
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "GitHub Actions build runner configuration"
+          echo "========================================"
+          echo "Runner OS      : $RUNNER_OS"
+          echo "Runner arch    : $RUNNER_ARCH"
+          echo "Workspace      : $GITHUB_WORKSPACE"
+          echo "Temporary dir  : $RUNNER_TEMP"
+          echo ""
+          echo "Operating system:"
+          cat /etc/os-release
+          echo "Kernel: $(uname -srmo)"
+          echo ""
+          echo "CPU:"
+          lscpu
+          echo "Available build jobs: $(nproc)"
+          echo ""
+          echo "Memory:"
+          free -h
+          echo ""
+          echo "Storage and mount points:"
+          df -hT
+          echo ""
+          echo "Block devices:"
+          lsblk -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS
+          echo ""
+          echo "System uptime and load:"
+          uptime
+          echo "========================================"
+
       - name: Check ImmortalWrt version
         shell: bash
         run: |
