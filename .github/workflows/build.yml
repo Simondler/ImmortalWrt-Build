@@ -117,17 +117,31 @@ jobs:
       
           CONFIG_FILE="package/base-files/files/bin/config_generate"
       
-          echo "Setting default LAN IP to 192.168.31.91"
+          echo "Before modification:"
+          grep -n 'lan) ipad=' "$CONFIG_FILE" || true
       
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "ERROR: $CONFIG_FILE not found."
+          if grep -q 'lan) ipad=${ipaddr:-"192.168.1.1"} ' "$CONFIG_FILE"; then
+      
+            sed -i \
+              's/lan) ipad=${ipaddr:-"192.168.1.1"} /lan) ipad=${ipaddr:-"192.168.31.91"} /g' \
+              "$CONFIG_FILE"
+      
+          else
+      
+            echo "ERROR: Expected LAN IP configuration was not found."
+            exit 1
+      
+          fi
+      
+          echo "After modification:"
+          grep -n 'lan) ipad=' "$CONFIG_FILE"
+      
+          if ! grep -q 'lan) ipad=${ipaddr:-"192.168.31.91"} ' "$CONFIG_FILE"; then
+            echo "ERROR: LAN IP modification failed."
             exit 1
           fi
       
-          sed -i 's/lan) ipad=${ipaddr:-"192.168.1.1"} /lan) ipad=${ipaddr:-"192.168.31.91"} /g' "$CONFIG_FILE"
-      
-          echo "Result:"
-          grep -n 'lan) ipad=' "$CONFIG_FILE" 
+          echo "Default LAN IP successfully changed to 192.168.31.91"
 
       - name: Restore ccache
         uses: actions/cache@v4
