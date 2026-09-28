@@ -256,9 +256,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../release
-          find bin/targets -type f \
-            \( -name '*.bin' -o -name '*.img' -o -name '*.iso' -o -name '*.vmdk' -o -name '*.gz' \
-            -o -name '*.manifest' -o -name 'sha256sums' \) \
+          find bin/targets/x86/64 -type f \
+            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
+            -o -name '*.iso' \) \
             -exec cp --parents '{}' ../release/ \;
 
           {
