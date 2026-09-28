@@ -41,12 +41,25 @@ jobs:
       
           echo "Checking ImmortalWrt version: ${VERSION}"
       
-          if ! git ls-remote --exit-code --tags \
+          TAG_INFO="$(git ls-remote --tags \
             "${REPO_URL}" \
-            "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            "refs/tags/${VERSION}")"
+      
+          if [ -n "$TAG_INFO" ]; then
+      
+            COMMIT="$(echo "$TAG_INFO" | awk '{print $1}')"
+      
+            echo "========================================"
+            echo "ImmortalWrt version exists."
+            echo "Version : ${VERSION}"
+            echo "Commit  : ${COMMIT}"
+            echo "========================================"
+      
+          else
       
             echo "ERROR: ImmortalWrt tag '${VERSION}' does not exist!"
             exit 1
+      
           fi
 
       - name: Install build dependencies
