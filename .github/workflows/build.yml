@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "ImmortalWrt branch, tag, or commit (25.12.2 series: openwrt-25.12)"
+        description: "ImmortalWrt branch, tag, or commit (v25.12.2 series: openwrt-25.12)"
         required: true
         default: "openwrt-25.12"
         type: string
