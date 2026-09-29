@@ -1,4 +1,4 @@
-#
+#  test
 # Automatically generated file; DO NOT EDIT.
 # ImmortalWrt Configuration
 #
@@ -187,7 +187,7 @@ CONFIG_GRUB_BAUDRATE=115200
 CONFIG_GRUB_BOOTOPTS=""
 CONFIG_GRUB_TIMEOUT="0"
 CONFIG_GRUB_TITLE="ImmortalWrt"
-# CONFIG_ISO_IMAGES is not set
+CONFIG_ISO_IMAGES=y
 # CONFIG_QCOW2_IMAGES is not set
 # CONFIG_VDI_IMAGES is not set
 CONFIG_VMDK_IMAGES=y
