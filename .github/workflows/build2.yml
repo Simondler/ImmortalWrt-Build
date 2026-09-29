@@ -1,4 +1,4 @@
-name: Build ImmortalWrt 2
+name: Build ImmortalWrt
 
 on:
   workflow_dispatch:
@@ -33,6 +33,38 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Detect GitHub build runner
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "GitHub Actions build runner configuration"
+          echo "========================================"
+          echo "Runner OS      : $RUNNER_OS"
+          echo "Runner arch    : $RUNNER_ARCH"
+          echo "Workspace      : $GITHUB_WORKSPACE"
+          echo "Temporary dir  : $RUNNER_TEMP"
+          echo ""
+          echo "Operating system:"
+          cat /etc/os-release
+          echo "Kernel: $(uname -srmo)"
+          echo ""
+          echo "CPU:"
+          lscpu
+          echo "Available build jobs: $(nproc)"
+          echo ""
+          echo "Memory:"
+          free -h
+          echo ""
+          echo "Storage and mount points:"
+          df -hT
+          echo ""
+          echo "Block devices:"
+          lsblk -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS
+          echo ""
+          echo "System uptime and load:"
+          uptime
+          echo "========================================"
 
       - name: Check ImmortalWrt version
         shell: bash
@@ -109,39 +141,25 @@ jobs:
           echo "Resolved commit: $SOURCE_COMMIT"
 
       - name: Set default LAN IP
-        if: steps.check_release.outputs.should_build == 'true'
         working-directory: immortalwrt
         shell: bash
         run: |
           set -euo pipefail
-      
+
           CONFIG_FILE="package/base-files/files/bin/config_generate"
-      
+          OLD_IP="192.168.1.1"
+          NEW_IP="192.168.31.91"
+
           echo "Before modification:"
-          grep -n 'lan) ipad=' "$CONFIG_FILE" || true
-      
-          if grep -q 'lan) ipad=${ipaddr:-"192.168.1.1"} ' "$CONFIG_FILE"; then
-      
-            sed -i \
-              's/lan) ipad=${ipaddr:-"192.168.1.1"} /lan) ipad=${ipaddr:-"192.168.31.91"} /g' \
-              "$CONFIG_FILE"
-      
-          else
-      
-            echo "ERROR: Expected LAN IP configuration was not found."
-            exit 1
-      
-          fi
-      
+          grep -Fn 'lan) ipad=${ipaddr:-"192.168.1.1"} ;;' "$CONFIG_FILE"
+
+          sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+
           echo "After modification:"
-          grep -n 'lan) ipad=' "$CONFIG_FILE"
-      
-          if ! grep -q 'lan) ipad=${ipaddr:-"192.168.31.91"} ' "$CONFIG_FILE"; then
-            echo "ERROR: LAN IP modification failed."
-            exit 1
-          fi
-      
-          echo "Default LAN IP successfully changed to 192.168.31.91"
+          grep -Fn "lan) ipad=\${ipaddr:-\"${NEW_IP}\"} ;;" "$CONFIG_FILE"
+
+          grep -Fq "lan) ipad=\${ipaddr:-\"${NEW_IP}\"} ;;" "$CONFIG_FILE"
+          echo "Default LAN IP changed to ${NEW_IP}"
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -159,6 +177,11 @@ jobs:
           ccache --set-config=compression=true
           echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
           ccache -z
+
+      - name: Apply custom package feeds
+        run: |
+          chmod +x ./feeds-manager.sh
+          ./feeds-manager.sh apply immortalwrt
 
       - name: Update feeds
         working-directory: immortalwrt
@@ -222,9 +245,9 @@ jobs:
           df -h
           ccache -s || true
           test ! -f build.log || tail -100 build.log
-          find bin/targets -type f \
-            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
-            -o -name '*.manifest' -o -name 'sha256sums' \) -print 2>/dev/null || true
+          find bin/targets/x86/64 -type f \
+            \( -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
+            -o -name '*.iso' \) -print 2>/dev/null || true
 
       - name: Upload build logs
         if: always()
@@ -253,92 +276,33 @@ jobs:
           SOURCE_REF: ${{ inputs.version }}
           SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
           SOURCE_VERSION: ${{ steps.source.outputs.display_version }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
-
           mkdir -p ../release
+          find bin/targets/x86/64 -type f \
+            \( -name '*.bin' -o -name '*.img' -o -name '*.vmdk' -o -name '*.gz' \
+            -o -name '*.iso' \) \
+            -exec cp --parents '{}' ../release/ \;
 
-          echo "Searching for release images..."
+          {
+            echo "Requested source: $SOURCE_REF"
+            echo "Resolved version: $SOURCE_VERSION"
+            echo "ImmortalWrt commit: $SOURCE_COMMIT"
+            echo "Configuration repository commit: $GITHUB_SHA"
+            echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } > ../release/build-info.txt
 
-          ISO_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-image-efi.iso' -print -quit)"
-          VMDK_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-ext4-combined-efi.vmdk.gz' -print -quit)"
-          IMG_FILE="$(find bin/targets -type f -name 'immortalwrt-x86-64-generic-ext4-combined-efi.img.gz' -print -quit)"
-
-          if [ -z "$ISO_FILE" ]; then
-            echo "ERROR: immortalwrt-x86-64-generic-image-efi.iso was not generated."
-            exit 1
-          fi
-
-          if [ -z "$VMDK_FILE" ]; then
-            echo "ERROR: immortalwrt-x86-64-generic-ext4-combined-efi.vmdk.gz was not generated."
-            exit 1
-          fi
-
-          if [ -z "$IMG_FILE" ]; then
-            echo "ERROR: immortalwrt-x86-64-generic-ext4-combined-efi.img.gz was not generated."
-            exit 1
-          fi
-
-          # Add the requested release version to the asset filenames.
-          cp "$ISO_FILE" \
-            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-image-efi.iso"
-
-          cp "$VMDK_FILE" \
-            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.vmdk.gz"
-
-          cp "$IMG_FILE" \
-            "../release/ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.img.gz"
-
-          # Generate checksums for the three release assets.
-          (
-            cd ../release
-            sha256sum \
-              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-image-efi.iso" \
-              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.vmdk.gz" \
-              "ImmortalWrt-${RELEASE_VERSION}-x86-64-generic-ext4-combined-efi.img.gz" \
-              > SHA256SUMS
-          )
-
-          cat > ../release/build-info.txt <<EOF
-          ImmortalWrt custom build
-          Release version: ${RELEASE_VERSION}
-          Requested source: ${SOURCE_REF}
-          Resolved source: ${SOURCE_VERSION}
-          ImmortalWrt commit: ${SOURCE_COMMIT}
-          Configuration repository commit: ${GITHUB_SHA}
-          Build run: ${GITHUB_RUN_NUMBER}
-          Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          EOF
-
-          echo "Release files:"
-          ls -lh ../release
       - name: Create GitHub Release
         if: ${{ success() && inputs.release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: immortalwrt-${{ inputs.release_version }}-${{ steps.source.outputs.ref_slug }}-${{ github.run_number }}
-          name: ImmortalWrt ${{ inputs.release_version }} x86-64 Build
+          tag_name: immortalwrt-${{ steps.source.outputs.ref_slug }}-run-${{ github.run_number }}
+          name: ImmortalWrt ${{ steps.source.outputs.ref_slug }} Build ${{ github.run_number }}
           body: |
-            ## ImmortalWrt ${{ inputs.release_version }} x86-64
+            ## ImmortalWrt Build
 
             - Requested source: `${{ inputs.version }}`
-            - Resolved source: `${{ steps.source.outputs.display_version }}`
-            - ImmortalWrt commit: `${{ steps.source.outputs.commit }}`
+            - Resolved source commit: `${{ steps.source.outputs.commit }}`
             - Configuration repository commit: `${{ github.sha }}`
             - Build run: `${{ github.run_number }}`
-
-            ### Release assets
-
-            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-image-efi.iso`
-            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.vmdk.gz`
-            - `ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.img.gz`
-            - `SHA256SUMS`
-            - `build-info.txt`
-          files: |
-            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-image-efi.iso
-            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.vmdk.gz
-            release/ImmortalWrt-${{ inputs.release_version }}-x86-64-generic-ext4-combined-efi.img.gz
-            release/SHA256SUMS
-            release/build-info.txt
-          fail_on_unmatched_files: true
+          files: release/**
