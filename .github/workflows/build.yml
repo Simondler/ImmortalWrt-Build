@@ -178,6 +178,11 @@ jobs:
           echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
           ccache -z
 
+      - name: Apply custom package feeds
+        run: |
+          chmod +x ./feeds-manager.sh
+          ./feeds-manager.sh apply immortalwrt
+
       - name: Update feeds
         working-directory: immortalwrt
         run: ./scripts/feeds update -a
